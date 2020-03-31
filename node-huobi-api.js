@@ -4,10 +4,11 @@
  * @return {object} instance to class object
  */
 
-let api = function Huobi(){
+let api = function Huobi(site = 'api.huobi.pro', version) {
     let Huobi = this;
 
     'use strict';
+    const WebSocketAsPromised = require('websocket-as-promised');
     const WebSocket = require('ws');
     const request = require('request');
     const crypto = require('crypto');
@@ -18,10 +19,10 @@ let api = function Huobi(){
     const SocksProxyAgent = require('socks-proxy-agent');
     //const stringHash = require('string-hash');
     //const async = require('async');
-    const site = 'api.huobi.pro';
-    const base = 'https://'+site;
-    const wapi = 'https://api.binance.com/wapi/';
-    const stream = 'wss://'+site+'/ws/';
+    // const site = site || 'api.huobi.pro';
+    const base = 'https://' + site;
+    version = version || '';
+    const stream = 'wss://' + site + '/ws';
     //const combineStream = 'wss://api.huobi.pro/ws/';
     const userAgent = 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.71 Safari/537.36';//'Mozilla/4.0 (compatible; Node Huobi API)';
     const contentType = 'application/x-www-form-urlencoded';
@@ -147,7 +148,7 @@ let api = function Huobi(){
      * @return {undefined}
      */
     const apiRequest = function (url, data = {}, callback, method = 'GET') {
-        if (!Huobi.options.APIKEY) throw Error('apiRequest: Invalid API Key');
+        // if (!Huobi.options.APIKEY) throw Error('apiRequest: Invalid API Key');
         let opt = reqObj(
             url,
             data,
@@ -165,6 +166,7 @@ let api = function Huobi(){
      * @param {object} opened_callback - the function to called when opened
      * @return {WebSocket} - websocket reference
      */
+
     const subscribe = function (symbols, callback, reconnect = false, opened_callback = false) {
 
         let httpsproxy = process.env.https_proxy || false;
@@ -198,14 +200,13 @@ let api = function Huobi(){
                     let channel = {};
                     channel.sub = "market." + s + ".depth.step0";
                     channel.id = new Date().getTime()+s;
-                    Huobi.options.log(channel.sub);
+                   // Huobi.options.log(channel.sub);
                     ws.send(JSON.stringify(channel));
                 });
-            }else{
+            } else {
                 let channel = {};
                 channel.sub = "market." + symbols + ".depth.step0";
-                Huobi.options.log(channel.sub);
-                channel.id = new Date().getTime()+symbols;
+                channel.id = new Date().getTime() + symbols;
                 ws.send(JSON.stringify(channel));
             }
 
@@ -222,7 +223,7 @@ let api = function Huobi(){
         ws.on('message', function (data) {
             data = pako.inflate(data,{ to: 'string' });
             //Huobi.options.log('ws data: ' + data);
-            //try {
+            try {
                 let msg = JSON.parse(data);
                 if (msg.ping) {
                     ws.send(JSON.stringify({ pong: msg.ping }));
@@ -232,16 +233,16 @@ let api = function Huobi(){
                      //options.log('subbed: '+msg.id +" status: "+msg.status );
                 } else {
                     if (msg.status && msg.status == 'error') {
-                        Huobi.options.log('error: '+ data );
-                        return;
-                        //throw new Error(msg)
+                        ws.send(JSON.stringify({ pong: msg.ping }));
+                        // Huobi.options.log('ping: '+msg.ping  );
+                        throw new Error(msg)
                     }
                     callback( JSON.parse(data) );
                 }
-            // } catch (error) {
-            //   //options.log('CombinedStream: Parse error: '+error.message +'-> '+ JSON.stringify(data) );
-            //   Huobi.options.log('Parse error: ' + error.message);
-            // }
+            } catch (error) {
+              //options.log('CombinedStream: Parse error: '+error.message +'-> '+ JSON.stringify(data) );
+              Huobi.options.log('Parse error: ' + error.message);
+            }
             // try {
             //     callback(JSON.parse(data));
             // } catch (error) {
@@ -250,6 +251,7 @@ let api = function Huobi(){
         });
         return ws;
     };
+
     /**
      * Make market request
      * @param {string} url - The http endpoint
@@ -273,6 +275,22 @@ let api = function Huobi(){
         );
         proxyRequest(opt, callback);
     };
+
+    const getSignature = function(url, data, query, method) {
+        if (!Huobi.options.APIKEY) throw Error('apiRequest: Invalid API Key');
+        if (!Huobi.options.APISECRET) throw Error('signedRequest: Invalid API Secret');
+        //if (typeof data.recvWindow === 'undefined') data.recvWindow = Huobi.options.recvWindow;
+        data.Timestamp = new Date().toISOString().replace(/\..+/, '');//.getTime()+ Huobi.info.timeOffset;
+        data.SignatureMethod='HmacSHA256';
+        data.SignatureVersion=2;
+        data.AccessKeyId=Huobi.options.APIKEY;
+        //console.log(data.Timestamp);
+
+        let source = method + '\n' + site + '\n' + url.replace(base,'') + '\n' + query;
+        let signature = crypto.createHmac('sha256', Huobi.options.APISECRET).update(source).digest('base64');//digest('hex'); // set the HMAC hash header
+        signature = encodeURIComponent(signature);
+        return signature;
+    }
     /**
      * Create a signed http request to the signed API
      * @param {string} url - The http endpoint
@@ -282,14 +300,6 @@ let api = function Huobi(){
      * @return {undefined}
      */
     const signedRequest = function (url, data = {}, callback, method = 'GET') {
-        if (!Huobi.options.APIKEY) throw Error('apiRequest: Invalid API Key');
-        if (!Huobi.options.APISECRET) throw Error('signedRequest: Invalid API Secret');
-        //if (typeof data.recvWindow === 'undefined') data.recvWindow = Huobi.options.recvWindow;
-        data.Timestamp = new Date().toISOString().replace(/\..+/, '');//.getTime()+ Huobi.info.timeOffset;
-        data.SignatureMethod='HmacSHA256';
-        data.SignatureVersion=2;
-        data.AccessKeyId=Huobi.options.APIKEY;
-        //console.log(data.Timestamp);
         let query = Object.keys(data)
         .sort( (a,b)=> (a > b) ? 1 : -1 )
         .reduce(function (a, k) {
@@ -297,12 +307,8 @@ let api = function Huobi(){
             return a;
         }, []).join('&');
         //console.log("query %s",query);
+        const signature = getSignature(url, data, query, method);
 
-        let source = method+'\n' + site+'\n'+url.replace(base,'')+'\n'+query;
-        //console.log("source %s",source);
-        let signature = crypto.createHmac('sha256', Huobi.options.APISECRET).update(source).digest('base64');//digest('hex'); // set the HMAC hash header
-        signature = encodeURIComponent(signature);
-        //console.log("Signature %s",signature);
         if (method === 'POST') {
             let opt = reqObjPOST(
                 url + '?Signature=' + signature,
@@ -480,6 +486,8 @@ let api = function Huobi(){
             Huobi.socketHeartbeatInterval = setInterval(socketHeartbeat, 30000);
         }
         Huobi.subscriptions[this.endpoint] = this;
+        // console.log('ENDPOINT', this.endpoint);
+        // console.log('OPENED', JSON.stringify(opened_callback));
         if (typeof opened_callback === 'function') opened_callback(this.endpoint);
     };
 
@@ -495,14 +503,18 @@ let api = function Huobi(){
         if (Huobi.subscriptions && Object.keys(Huobi.subscriptions).length === 0) {
             clearInterval(Huobi.socketHeartbeatInterval);
         }
-        Huobi.options.log('WebSocket closed: ' + this.endpoint +
+        Huobi.options.log('WebSocket closed: ' + (this.endpoint || '') +
             (code ? ' (' + code + ')' : '') +
             (reason ? ' ' + reason : ''));
         if (Huobi.options.reconnect && this.reconnect && reconnect) {
-            if (this.endpoint && parseInt(this.endpoint.length, 10) === 60) Huobi.options.log('Account data WebSocket reconnecting...');
-            else Huobi.options.log('WebSocket reconnecting: ' + this.endpoint + '...');
+            if (this.endpoint && parseInt(this.endpoint.length, 10) === 60)
+                Huobi.options.log('Account data WebSocket reconnecting...');
+            else
+                Huobi.options.log('WebSocket reconnecting: ' + (this.endpoint || '') + '...');
             try {
-                reconnect();
+                setTimeout(() => {
+                    reconnect();
+                }, 5000);
             } catch (error) {
                 Huobi.options.log('WebSocket reconnect error: ' + error.message);
             }
@@ -545,7 +557,7 @@ let api = function Huobi(){
     const handleSocketError = function (error) {
         /* Errors ultimately result in a `close` event.
            see: https://github.com/websockets/ws/blob/828194044bf247af852b31c49e2800d557fedeff/lib/websocket.js#L126 */
-        Huobi.options.log('WebSocket error: ' + this.endpoint +
+        Huobi.options.log('WebSocket error: ' + (this.endpoint || '') +
             (error.code ? ' (' + error.code + ')' : '') +
             (error.message ? ' ' + error.message : ''));
     };
@@ -1429,6 +1441,320 @@ let api = function Huobi(){
             else if (symbol.substr(-4) === 'USDT') return 'USDT';
         },
         websockets: {
+            // ws: null,
+            connect: function(reconnect = false, opened_callback = false, endpoint = stream) {
+                console.log(`Connecting to ${endpoint}...`);
+                let httpsproxy = process.env.https_proxy || false;
+                let socksproxy = process.env.socks_proxy || false;
+                // let ws = false;
+                let agent;
+                if (socksproxy !== false) {
+                    socksproxy = proxyReplacewithIp(socksproxy);
+                    if (Huobi.options.verbose) Huobi.options.log('using socks proxy server ' + socksproxy);
+                    agent = new SocksProxyAgent({
+                        protocol: parseProxy(socksproxy)[0],
+                        host: parseProxy(socksproxy)[1],
+                        port: parseProxy(socksproxy)[2]
+                    });
+                } else if (httpsproxy !== false) {
+                    if (Huobi.options.verbose) Huobi.options.log('using proxy server ' + agent);
+                    let config = url.parse(httpsproxy);
+                    agent = new HttpsProxyAgent(config);
+                } else {
+                }
+                // ws = new WebSocketAsPromised(stream, {
+                //     createWebSocket: url => agent ? new WebSocket(url, {agent}) : new WebSocket(url),
+                //     extractMessageData: event => event, // <- this is important
+                // });
+                ws = agent ? new WebSocket(endpoint, {agent}) : new WebSocket(endpoint);
+                ws.endpoint = endpoint;
+                ws.reconnect = Huobi.options.reconnect ?
+                reconnect :
+                () => {console.log('Not reconnecting')};
+                ws.isAlive = false;
+                // console.log('OPENED_CALLBACK', JSON.stringify(opened_callback));
+                ws.on('open', handleSocketOpen.bind(ws, opened_callback || (() => {console.log('Connected')} ) ));
+                ws.on('pong', handleSocketHeartbeat);
+                ws.on('error', handleSocketError);
+                ws.on('close', handleSocketClose.bind(ws, ws.reconnect));
+                return ws;
+            },
+            subscribeV1: (ws, topic) => {
+                try {
+                    ws.send(JSON.stringify({op: 'sub', cid: '', topic}));
+                    console.log('Subscribed to: ', topic);
+                } catch (error) {
+                    console.error(error);
+                }
+            },
+            subscribeV2: (ws, topic, options) => {
+                try {
+                    const req = Object.assign({sub: topic, id: ''}, options);
+                    ws.send(JSON.stringify(req));
+                } catch (error) {
+                    console.error(error);
+                }
+            },
+            subscribeKline: (ws, ch, options) => {
+                try {
+                    const req = Object.assign({req: ch}, options);
+                    ws.send(JSON.stringify(req));
+                } catch (error) {
+                    console.error(error);
+                }
+            },
+            onV1Message: (ws, callback) => {
+                ws.on('message', function (data) {
+                    data = pako.inflate(data,{ to: 'string' });
+                    // Huobi.options.log('ws data: ' + data);
+                    try {
+                        let msg = JSON.parse(data);
+                        if (msg.ping) {
+                            ws.send(JSON.stringify({ pong: msg.ping }));
+                            // Huobi.options.log('ping: ' + msg.ping);
+                        } else if (msg.subbed) {
+                            Huobi.options.log('subbed: ' + msg.subbed + " status: " + msg.status);
+                        } else {
+                            if (msg.status && msg.status == 'error') {
+                                ws.send(JSON.stringify({ pong: msg.ping }));
+                                Huobi.options.log('ping: '+msg.ping  );
+                                throw new Error(msg)
+                            }
+                            callback( JSON.parse(data) );
+                        }
+                    } catch (error) {
+                        //options.log('CombinedStream: Parse error: '+error.message +'-> '+ JSON.stringify(data) );
+                        Huobi.options.log('Parse error: ' + error.message);
+                    }
+                });
+            },
+
+            onV2Message: (ws, callback, topics) => {
+                const authSubscribe = (topics) => {
+                    topics.forEach(topic => {
+                        ws.send(JSON.stringify({
+                            action: 'sub',
+                            ch: topic,
+                        }));
+
+                    });
+                };
+                ws.on('message', function (data) {
+                    try {
+                        let msg = JSON.parse(data);
+                        if (msg.action === 'ping') {
+                            ws.send(JSON.stringify({
+                                action: 'pong',
+                                data: {
+                                    ts: msg.data.ts,
+                                }
+                            }));
+                            // Huobi.options.log('ping: ' + msg.ping);
+                        } else if (msg.ch === 'auth' && msg.code === 200) {
+                            console.log('Websocket authenticated!');
+                            this.subscribeV2(ws, topics);
+                        } else if (msg.action === 'sub') {
+                            Huobi.options.log('Huobi: Subscribed to ' + msg.ch);
+                            // options.log('subbed: '+msg.id +" status: "+msg.status );
+                        } else {
+                            // if (msg.status && msg.status == 'error') {
+                            //     ws.send(JSON.stringify({ pong: msg.ping }));
+                            //     Huobi.options.log('ping: '+msg.ping  );
+                            //     throw new Error(msg)
+                            // }
+                            callback( JSON.parse(data) );
+                        }
+                    } catch (error) {
+                        //options.log('CombinedStream: Parse error: '+error.message +'-> '+ JSON.stringify(data) );
+                        Huobi.options.log('Parse error: ' + error.message);
+                    }
+                });
+            },
+            market: function (topics, callback) {
+                const endpoint = stream;
+                const ws = this.connect(() => this.market(topics, callback), () => {
+                    console.log(`Connected!`);
+                    this.onV1Message(ws, callback);
+                    topics.forEach(topic => {
+                        this.subscribeV2(ws, topic);
+                    });
+                    return ws;
+                }, endpoint);
+                return ws;
+            },
+            kline: function (topics, callback, options) {
+                const endpoint = stream;
+                const ws = this.connect(() => this.kline(topics, callback, options), () => {
+                    console.log(`Connected!`);
+                    this.onV1Message(ws, callback);
+                    topics.forEach(topic => {
+                        this.subscribeKline(ws, topic, options);
+                    });
+                    return ws;
+                }, endpoint);
+                return ws;
+            },
+            // futures: function () {
+            //     const ws = this.connect(true, (endpoint) => {
+            //         this.onMessage(ws, callback);
+            //         topics.forEach(topic => {
+            //             this.subscribe(ws, topic);
+            //         });
+            //         return ws;
+            //     });
+            //     return ws;
+            // },
+            userV1: function(topics, callback, endpoint) {
+                const versionStr = '/ws/v1';
+
+                const ws = this.connect(() => this.userV1(topics, callback, endpoint), () => {
+                    console.log(`Connected!`);
+                    // authenticate
+                    let {params, signature} = this.getSignature(site, '/notification', '2');
+                    const req = Object.assign({
+                        op: 'auth',
+                        type: 'api',
+                    }, params, {Signature: signature});
+                    // console.log('Websocket Signature Request', JSON.stringify(req, null, 2));
+                    ws.send(JSON.stringify(req));
+                    // ws.on('message', console.log);
+                    this.onV1Message(ws, callback, topics);
+                    // setTimeout(() => {
+                    // }, 500);
+                    return ws;
+                }, endpoint);
+                return ws;
+            },
+            userV2: function(topics, callback, endpoint) {
+                const versionStr = '/ws/v2';
+
+                const ws = this.connect(() => this.userV2(topics, callback, endpoint), () => {
+                    console.log(`Connected!`);
+                    // authenticate
+                    let {params, signature} = this.getSignature(site, versionStr, '2.1');
+                    const req = {
+                        action: 'req',
+                        ch: 'auth',
+                        params: {
+                            authType: 'api',
+                            ...params,
+                            signature,
+                        },
+                    };
+                    // console.log('Websocket Signature Request', JSON.stringify(req, null, 2));
+                    ws.send(JSON.stringify(req));
+                    // ws.on('message', console.log);
+                    this.onV2Message(ws, callback, topics);
+                    // setTimeout(() => {
+                    // }, 500);
+                    return ws;
+                }, endpoint);
+                return ws;
+            },
+            user: function(topics, callback) {
+               return this.userV2(topics, callback, stream + '/v2');
+            },
+            futuresUser: function(topics, callback) {
+                return this.userV1(topics, callback, stream);
+            },
+            getSignature: function(base, path, signatureVersion) {
+                if (!Huobi.options.APIKEY) throw Error('apiRequest: Invalid API Key');
+                if (!Huobi.options.APISECRET) throw Error('signedRequest: Invalid API Secret');
+                const accessKey =  Huobi.options.APIKEY,
+                    signatureMethod = 'HmacSHA256',
+                    timestamp = new Date().toISOString().replace(/\..+/, '');//.getTime()+ Huobi.info.timeOffset;
+
+                let params;
+                if (signatureVersion === '2.1') {
+                    params = {
+                        accessKey, signatureMethod, signatureVersion, timestamp,
+                    };
+                } else if (signatureVersion === '2') {
+                    params = {
+                        AccessKeyId: accessKey,
+                        SignatureMethod: signatureMethod,
+                        SignatureVersion: signatureVersion,
+                        Timestamp: timestamp,
+                    }
+                }
+
+                let query = Object.keys(params)
+                .sort( (a,b)=> (a > b) ? 1 : -1 )
+                .reduce(function (a, k) {
+                    a.push(k + '=' + encodeURIComponent(params[k]));
+                    return a;
+                }, []).join('&');
+
+                let source = 'GET' + '\n' + base + '\n' + path + '\n' + query;
+                // console.log('Source:', source);
+                let signature = crypto.createHmac('sha256', Huobi.options.APISECRET).update(source).digest('base64');//digest('hex'); // set the HMAC hash header
+                // signature = encodeURIComponent(signature);
+                return {params, signature};
+                //console.log("Signature %s",signature);
+            },
+            // subscribe: function (topic, callback) {
+            //     let doSymbolsToWebsocket = function () {
+            //         if (Array.isArray(symbols)) {
+            //             symbols.forEach(s => {
+            //                 let channel = {};
+            //                 channel.sub = "market." + s + ".depth.step0";
+            //                 channel.id = new Date().getTime()+s;
+            //                // Huobi.options.log(channel.sub);
+            //                 ws.send(JSON.stringify(channel));
+            //             });
+            //         } else {
+            //             let channel = {};
+            //             channel.sub = "market." + symbols + ".depth.step0";
+            //             channel.id = new Date().getTime() + symbols;
+            //             ws.send(JSON.stringify(channel));
+            //         }
+
+
+            //     };
+            //     if (Huobi.options.verbose) Huobi.options.log('Subscribed to ' + stream);
+            //     ws.reconnect = Huobi.options.reconnect;
+            //     ws.endpoint = new Date().getTime()+"depth";
+            //     ws.isAlive = false;
+            //     ws.on('open', handleSocketOpen.bind(ws, opened_callback ? doSymbolsToWebsocket  : opened_callback));
+            //     ws.on('pong', handleSocketHeartbeat);
+            //     ws.on('error', handleSocketError);
+            //     ws.on('close', handleSocketClose.bind(ws, reconnect));
+            //     ws.on('message', function (data) {
+            //         data = pako.inflate(data,{ to: 'string' });
+            //         //Huobi.options.log('ws data: ' + data);
+            //         try {
+            //             let msg = JSON.parse(data);
+            //             if (msg.ping) {
+            //                 ws.send(JSON.stringify({ pong: msg.ping }));
+            //                // Huobi.options.log('ping: '+msg.ping  );
+            //             } else if (msg.subbed) {
+            //                 //Huobi.options.log('subbed: '+msg.id +" status: "+msg.status );
+            //                  //options.log('subbed: '+msg.id +" status: "+msg.status );
+            //             } else {
+            //                 if (msg.status && msg.status == 'error') {
+            //                     ws.send(JSON.stringify({ pong: msg.ping }));
+            //                     // Huobi.options.log('ping: '+msg.ping  );
+            //                     throw new Error(msg)
+            //                 }
+            //                 callback( JSON.parse(data) );
+            //             }
+            //         } catch (error) {
+            //           //options.log('CombinedStream: Parse error: '+error.message +'-> '+ JSON.stringify(data) );
+            //           Huobi.options.log('Parse error: ' + error.message);
+            //         }
+            //         // try {
+            //         //     callback(JSON.parse(data));
+            //         // } catch (error) {
+            //         //     Huobi.options.log('Parse error: ' + error.message);
+            //         // }
+            //     });
+            //     return ws;
+            // },
+
+            pull: function pull(callback) {
+
+            },
+
             /**
              * Userdata websockets function
              * @param {function} callback - the callback function
@@ -1466,9 +1792,9 @@ let api = function Huobi(){
              * @param {boolean} reconnect - subscription callback
              * @return {WebSocket} the websocket reference
              */
-            subscribe: function (url, callback, reconnect = false) {
-                return subscribe(url, callback, reconnect);
-            },
+            // subscribe: function (url, callback, reconnect = false) {
+            //     return subscribe(url, callback, reconnect);
+            // },
 
             /**
              * Subscribe to a generic combined websocket
@@ -1738,7 +2064,6 @@ let api = function Huobi(){
                             Huobi.klineQueue[symbol][interval].push(kline);
                         }
                     } else {
-                        //Binance.options.log('@klines at ' + kline.k.t);
                         klineHandler(symbol, kline);
                         if (callback) callback(symbol, interval, klineConcat(symbol, interval));
                     }
@@ -1746,8 +2071,7 @@ let api = function Huobi(){
 
                 let getSymbolKlineSnapshot = function (symbol, limit = 500) {
                     publicRequest(base + 'v1/klines', { symbol: symbol, interval: interval, limit: limit }, function (error, data) {
-                        klineData(symbol, interval, data);
-                        //Binance.options.log('/klines at ' + Binance.info[symbol][interval].timestamp);
+                        // klineData(symbol, interval, data);
                         if (typeof Huobi.klineQueue[symbol][interval] !== 'undefined') {
                             for (let kline of Huobi.klineQueue[symbol][interval]) klineHandler(symbol, kline, Huobi.info[symbol][interval].timestamp);
                             delete Huobi.klineQueue[symbol][interval];
@@ -1795,7 +2119,7 @@ let api = function Huobi(){
                     let streams = symbols.map(function (symbol) {
                         return symbol.toLowerCase() + '@kline_' + interval;
                     });
-                    subscription = subscribeCombined(streams, callback, reconnect);
+                    subscription = subscribe(streams, callback, reconnect);
                 } else {
                     let symbol = symbols.toLowerCase();
                     subscription = subscribe(symbol + '@kline_' + interval, callback, reconnect);
